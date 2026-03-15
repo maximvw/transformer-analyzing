@@ -1,0 +1,17 @@
+[project]
+name = "diplom"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11.13"
+dependencies = [
+    "einops>=0.8.2",
+    "fancy-einsum>=0.0.3",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "plotly>=6.6.0",
+    "scikit-learn>=1.8.0",
+    "torch>=2.10.0",
+    "transformers>=5.3.0",
+]

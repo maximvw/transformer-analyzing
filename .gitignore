@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.claude
+4x4digits_mul.pdf
+project_proposal.pdf
+
+# Model checkpoints and weights
+*.bin
+*.pt
+*.pth
+*ckpts
+
+train_models/
+pdfs/
+
+# Large training data (regenerate with generate_data.py)
+Internalize_CoT_Step_by_Step/data/*/train.txt
