@@ -84,7 +84,7 @@ def generate_example(a: int, b: int, D: int = 4) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Generate multiplication training data")
     parser.add_argument("--D", type=int, default=4, help="Number of digits (default: 4)")
-    parser.add_argument("--train_size", type=int, default=8000, help="Training set size")
+    parser.add_argument("--train_size", type=int, default=80_800, help="Training set size")
     parser.add_argument("--val_size", type=int, default=1000, help="Validation set size")
     parser.add_argument("--test_size", type=int, default=1000, help="Test set size")
     parser.add_argument("--output_dir", type=str,

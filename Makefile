@@ -2,8 +2,10 @@
        fig2 fig3 fig5 fig6 fig7 table1 all-figures
 
 # === Генерация данных ===
+TRAIN_SIZE ?= 80800
+
 data:
-	uv run generate_data.py
+	uv run generate_data.py --train_size $(TRAIN_SIZE)
 
 # === Тренировка моделей ===
 N_LAYER ?= 2
