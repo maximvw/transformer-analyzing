@@ -105,9 +105,8 @@ acts = {module_name: torch.cat(acts, dim=0) for module_name, acts in all_acts.it
 
 # %%
 
-output_dir = os.path.join(BASE_DIR, f"paper_figures")
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+output_dir = os.path.join(BASE_DIR, "paper_figures")
+os.makedirs(output_dir, exist_ok=True)
 
 # %%
 

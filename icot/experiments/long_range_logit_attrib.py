@@ -174,4 +174,6 @@ for ax, M, title in zip(axes, [M_sft, M_icot], ["SFT", "ICoT"]):
 cbar = fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.9, location="right")
 cbar.set_label("Δ logit", fontsize=18)
 
-plt.savefig("paper_figures/long_term_effects_heatmap.pdf", dpi=300)
+output_path = os.path.join(BASE_DIR, "paper_figures", "long_term_effects_heatmap.pdf")
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+plt.savefig(output_path, dpi=300)

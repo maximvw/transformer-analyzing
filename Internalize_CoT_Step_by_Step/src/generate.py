@@ -2,7 +2,7 @@ import math
 import time
 import torch
 from torch.utils.data import DataLoader
-from transformers import AdamW
+from torch.optim import AdamW
 import argparse
 import os
 import sys
@@ -75,19 +75,15 @@ def main():
     parser.set_defaults(bf16=False)
     args = parser.parse_args()
 
-    print (args)
-
     if args.bf16:
         dtype = 'bfloat16'
     else:
         dtype = 'float32'
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    ctx = torch.amp.autocast(device_type='cuda', dtype=ptdtype)
-    print (ptdtype, dtype, device)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    ctx = torch.amp.autocast(device_type=device.type, dtype=ptdtype)
 
     # Load model
-    print (f'Loading from {args.from_pretrained}')
     model = ImplicitModel.from_pretrained(args.from_pretrained).to(device).to(ptdtype)
     model = model.to(device).to(ptdtype)
     model.eval()

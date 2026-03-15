@@ -39,13 +39,13 @@ TEST_PATH = Internalize_CoT_Step_by_Step/data/4_by_4_mult/test_bigbench.txt
 
 infer-icot:
 	$(INFER_CMD) \
-		--model train_models/4_by_4_mult/icot/checkpoint_12 \
+		--from_pretrained train_models/4_by_4_mult/icot/checkpoint_12 \
 		--test_path $(TEST_PATH) \
 		--max_new_tokens 800
 
 infer-sft:
 	$(INFER_CMD) \
-		--model train_models/4_by_4_mult/sft/checkpoint_59 \
+		--from_pretrained train_models/4_by_4_mult/sft/checkpoint_59 \
 		--test_path $(TEST_PATH) \
 		--max_new_tokens 800
 

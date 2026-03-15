@@ -318,9 +318,11 @@ def plot_heatmaps_and_loss(
 
 
 def main():
-    csv_a = "ckpts/vanilla_ft/grad_probe_log.csv"
-    csv_b = "ckpts/aux_head/grad_probe_log.csv"
-    output_filepath = "paper_figures/grad_norms_and_losses.pdf"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    csv_a = os.path.join(base_dir, "ckpts/vanilla_ft/grad_probe_log.csv")
+    csv_b = os.path.join(base_dir, "ckpts/aux_head/grad_probe_log.csv")
+    output_filepath = os.path.join(base_dir, "paper_figures/grad_norms_and_losses.pdf")
+    os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
     plot_heatmaps_and_loss(
         csv_a=csv_a,
         csv_b=csv_b,

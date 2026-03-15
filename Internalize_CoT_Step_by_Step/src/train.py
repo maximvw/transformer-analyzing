@@ -173,8 +173,8 @@ def main():
     if args.bf16:
         dtype = 'bfloat16'
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    ctx = torch.amp.autocast(device_type='cuda', dtype=ptdtype)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    ctx = torch.amp.autocast(device_type=device.type, dtype=ptdtype)
     # Create model
     if args.from_pretrained is None:
         gpt2_config = None
