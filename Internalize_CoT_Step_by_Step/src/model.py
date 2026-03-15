@@ -111,7 +111,7 @@ class ImplicitModel(nn.Module):
             num_return_sequences=1,
             logits_processor=logits_processor,
             stopping_criteria=stopping_criteria,
-            do_sample=True,
+            do_sample=False,
         )
         beam_output = beam_output.view(batch_size,1,-1)
         beam_output_list = []

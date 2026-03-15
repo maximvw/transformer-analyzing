@@ -56,6 +56,7 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
         second_sep_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id, skip=1)
         eos_positions = get_sep_position(input_ids_all, tokenizer.eos_token_id, skip=2)
 
+        input_ids_all_original = input_ids_all
         if scheduled_to_remove > 0 or removal_smoothing_lambda != float('inf'):
             if keep_position:
                 position_ids_all = torch.arange(0, input_ids_all.shape[-1], dtype=torch.long, device=device).unsqueeze(0).repeat(batch_size, 1)
@@ -107,9 +108,9 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
         )
 
         # Evaluate
-        for i, (input_ids_all_i, beam_output_i) in enumerate(zip(input_ids_all, beam_output)):
+        for i, (input_ids_all_orig_i, beam_output_i) in enumerate(zip(input_ids_all_original, beam_output)):
             sep_position = sep_positions[i].item()
-            tgt = input_ids_all_i[sep_position+1:]
+            tgt = input_ids_all_orig_i[sep_position+1:]
             tgt_text = tokenizer.decode(tgt, skip_special_tokens=True)
             ans = extract_answer(tgt_text)
             pred_text = tokenizer.decode(beam_output_i[0][sep_position+1:], skip_special_tokens=True)
