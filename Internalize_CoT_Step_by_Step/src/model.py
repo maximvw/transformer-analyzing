@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from torch.nn import CrossEntropyLoss
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, StoppingCriteriaList, GenerationConfig, LogitsProcessorList
+from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteriaList, GenerationConfig, LogitsProcessorList
 import sys
 
 from configuration_model import ImplicitModelConfig
@@ -14,13 +14,7 @@ class ImplicitModel(nn.Module):
     def __init__(self, config, reinitialize_weights=False):
         super().__init__()
         self.config = config
-        if config.gpt2_config is not None:
-            # Custom config (e.g. 2-layer 4-head for training from scratch)
-            model_config = AutoConfig.for_model("gpt2", **config.gpt2_config)
-            self.base_model = AutoModelForCausalLM.from_config(model_config)
-            print(f"Initialized model from custom config: {config.gpt2_config}")
-        else:
-            self.base_model = AutoModelForCausalLM.from_pretrained(config.base_model, trust_remote_code=True)
+        self.base_model = AutoModelForCausalLM.from_pretrained(config.base_model, trust_remote_code=True)
         if reinitialize_weights:
             print ('Reinitializing model weights!')
             self.base_model.apply(self.base_model._init_weights)
@@ -111,7 +105,7 @@ class ImplicitModel(nn.Module):
             num_return_sequences=1,
             logits_processor=logits_processor,
             stopping_criteria=stopping_criteria,
-            do_sample=False,
+            do_sample=True,
         )
         beam_output = beam_output.view(batch_size,1,-1)
         beam_output_list = []

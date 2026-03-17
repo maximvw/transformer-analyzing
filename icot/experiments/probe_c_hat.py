@@ -218,6 +218,4 @@ fig.add_artist(
 fig.text(0.5, 0.95, "SFT", ha="center", va="center", fontsize=13, fontweight="bold")
 fig.text(0.5, 0.49, "ICoT", ha="center", va="center", fontsize=13, fontweight="bold")
 
-output_path = os.path.join(BASE_DIR, "paper_figures", "c_hat_probe.pdf")
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
-plt.savefig(output_path, dpi=300, bbox_inches="tight")
+plt.savefig("paper_figures/c_hat_probe.pdf", dpi=300, bbox_inches="tight")

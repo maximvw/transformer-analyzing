@@ -92,8 +92,12 @@ if "base_model.lm_head" in all_acts:
 
 # %%
 
-output_dir = os.path.join(BASE_DIR, "paper_figures")
-os.makedirs(output_dir, exist_ok=True)
+output_dir = os.path.join(
+    BASE_DIR,
+    f"paper_figures",
+)
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
 
 # %%
 
