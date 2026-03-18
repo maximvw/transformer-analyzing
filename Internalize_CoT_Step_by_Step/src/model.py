@@ -14,11 +14,17 @@ class ImplicitModel(nn.Module):
     def __init__(self, config, reinitialize_weights=False):
         super().__init__()
         self.config = config
-        self.base_model = AutoModelForCausalLM.from_pretrained(config.base_model, trust_remote_code=True)
+        if config.gpt2_config is not None:
+            from transformers import GPT2Config, GPT2LMHeadModel
+            gpt2_cfg = GPT2Config(**config.gpt2_config)
+            self.base_model = GPT2LMHeadModel(gpt2_cfg)
+        else:
+            self.base_model = AutoModelForCausalLM.from_pretrained(config.base_model, trust_remote_code=True)
         if reinitialize_weights:
             print ('Reinitializing model weights!')
             self.base_model.apply(self.base_model._init_weights)
-        self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
+        tokenizer_name = 'gpt2' if config.gpt2_config is not None else config.tokenizer_name
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def forward(self, input_ids, position_ids=None, output_attentions=False):
         if position_ids is not None:

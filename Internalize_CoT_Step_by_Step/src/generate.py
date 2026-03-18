@@ -2,7 +2,6 @@ import math
 import time
 import torch
 from torch.utils.data import DataLoader
-from transformers import AdamW
 import argparse
 import os
 import sys

@@ -18,9 +18,12 @@ TRAIN_BASE = --model gpt2 --n_layer $(N_LAYER) --n_head $(N_HEAD) --n_embd $(N_E
 	--val_path Internalize_CoT_Step_by_Step/data/4_by_4_mult/valid.txt \
 	--lr 5e-5 --batch_size 32 --seed 3456 --reset_optimizer
 
+EPOCHS ?= 200
+EPOCHS_SFT ?= 60
+
 train-icot:
 	$(TRAIN_CMD) $(TRAIN_BASE) \
-		--epochs 3 \
+		--epochs $(EPOCHS) \
 		--remove_per_epoch 8 \
 		--remove_all_when_remove_beyond inf \
 		--removal_smoothing_lambda 4 \
@@ -30,7 +33,7 @@ train-icot:
 
 train-sft:
 	$(TRAIN_CMD) $(TRAIN_BASE) \
-		--epochs 3 \
+		--epochs $(EPOCHS_SFT) \
 		--remove_per_epoch 99999 \
 		--removal_side left \
 		--save_model train_models/4_by_4_mult/sft

@@ -9,7 +9,6 @@ import random
 import torch
 
 from torch.utils.data import DataLoader
-from transformers import AdamW
 
 from model import ImplicitModel
 from configuration_model import ImplicitModelConfig
@@ -159,6 +158,9 @@ def main():
     parser.set_defaults(keep_position=False)
     parser.add_argument('--reinitialize_weights', action='store_true')
     parser.set_defaults(reinitialize_weights=False)
+    parser.add_argument('--n_layer', type=int, default=None)
+    parser.add_argument('--n_head', type=int, default=None)
+    parser.add_argument('--n_embd', type=int, default=None)
     args = parser.parse_args()
 
     if args.remove_all_when_remove_beyond == 'inf':
@@ -181,7 +183,18 @@ def main():
 
     # Create model
     if args.from_pretrained is None:
-        config = ImplicitModelConfig(base_model=args.model)
+        gpt2_config = None
+        if args.n_layer is not None or args.n_head is not None or args.n_embd is not None:
+            from transformers import GPT2Config
+            gpt2_cfg = GPT2Config.from_pretrained('gpt2')
+            if args.n_layer is not None:
+                gpt2_cfg.n_layer = args.n_layer
+            if args.n_head is not None:
+                gpt2_cfg.n_head = args.n_head
+            if args.n_embd is not None:
+                gpt2_cfg.n_embd = args.n_embd
+            gpt2_config = gpt2_cfg.to_dict()
+        config = ImplicitModelConfig(base_model=args.model, gpt2_config=gpt2_config)
         model = ImplicitModel(config).to(device).to(ptdtype)
     else:
         print (f'Loading from {args.from_pretrained}')
