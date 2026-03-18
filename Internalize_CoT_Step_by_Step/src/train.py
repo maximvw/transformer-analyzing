@@ -115,10 +115,10 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
             pred_ans = extract_answer(pred_text)
             if ans == pred_ans:
                 total_correct += 1
-            print (f'Input: {tokenizer.decode(input_ids_all_i[:sep_position], skip_special_tokens=True)}')
-            print (f'Target: {tgt_text}')
-            print (f'Predicted: {pred_text}')
-            print ('')
+            # print (f'Input: {tokenizer.decode(input_ids_all_i[:sep_position], skip_special_tokens=True)}')
+            # print (f'Target: {tgt_text}')
+            # print (f'Predicted: {pred_text}')
+            # print ('')
     accuracy = total_correct / total_instances
     token_accuracy = total_correct_tokens / total_tokens
     loss = total_loss / total_tokens
