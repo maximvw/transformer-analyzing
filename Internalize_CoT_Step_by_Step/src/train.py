@@ -158,6 +158,8 @@ def main():
     parser.set_defaults(keep_position=False)
     parser.add_argument('--reinitialize_weights', action='store_true')
     parser.set_defaults(reinitialize_weights=False)
+    parser.add_argument('--resume', action='store_true')
+    parser.set_defaults(resume=False)
     parser.add_argument('--n_layer', type=int, default=None)
     parser.add_argument('--n_head', type=int, default=None)
     parser.add_argument('--n_embd', type=int, default=None)
@@ -171,7 +173,6 @@ def main():
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     lambda_distribution = compute_lambda_distribution(args.removal_smoothing_lambda)
-    print (lambda_distribution.tolist()[:10])
 
     dtype = 'float32'
     if args.bf16:
@@ -256,9 +257,26 @@ def main():
     steps_per_removed_token = int(round(steps_per_epoch / args.remove_per_epoch))
     remove_step_counter = 0
     best_val_accuracy = float('-inf')
+    start_epoch = 0
+
+    if args.resume and args.from_pretrained is not None:
+        training_state_path = os.path.join(args.from_pretrained, 'training_state.pt')
+        if os.path.exists(training_state_path):
+            training_state = torch.load(training_state_path, map_location=device)
+            step = training_state['step']
+            start_epoch = training_state['epoch'] + 1
+            scheduled_to_remove = training_state['scheduled_to_remove']
+            if scheduled_to_remove == 'inf':
+                scheduled_to_remove = float('inf')
+            remove_step_counter = training_state['remove_step_counter']
+            best_val_accuracy = training_state['best_val_accuracy']
+            optimizer.load_state_dict(training_state['optimizer'])
+            print(f'Resumed from epoch {training_state["epoch"]}, step {step}, scheduled_to_remove={scheduled_to_remove}')
+        else:
+            print(f'Warning: --resume specified but {training_state_path} not found, starting fresh')
 
     all_cot_removed_in_prev_batch = False
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         if scheduled_to_remove < float('inf'):
             scheduled_to_remove = int(round(scheduled_to_remove))
         if scheduled_to_remove >= args.remove_all_when_remove_beyond:
@@ -273,9 +291,7 @@ def main():
             if epoch >= args.pretrain_epochs:
                 remove_step_counter += 1
             if scheduled_to_remove > prev_scheduled_to_remove:
-                print(f" -epoch {epoch}. step {step}. removing: {scheduled_to_remove}")
                 if args.reset_optimizer and (not all_cot_removed_in_prev_batch):
-                    print ('RESETTING OPTIMIZER')
                     optimizer.zero_grad(set_to_none=True)
                     del optimizer
                     optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, **extra_args)
@@ -340,7 +356,7 @@ def main():
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
-            if step % 100 == 0:
+            if step % 8000 == 0:
                 token_accuracy = outputs.token_accuracy.item()
                 ppl = loss.exp().item()
                 print (f"Step: {step}. PPL: {ppl}. Token Accuracy: {token_accuracy}")
@@ -354,7 +370,17 @@ def main():
             if args.test_path:
                 accuracy, token_accuracy, ppl = evaluate(test_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                 print (f'Test. PPL: {ppl}; Accuracy: {accuracy}; Token Accuracy: {token_accuracy}.')
-        model.save_pretrained(os.path.join(args.save_model, f'checkpoint_{epoch}'))
+        checkpoint_dir = os.path.join(args.save_model, f'checkpoint_{epoch}')
+        model.save_pretrained(checkpoint_dir)
+        training_state = {
+            'step': step,
+            'epoch': epoch,
+            'scheduled_to_remove': scheduled_to_remove if scheduled_to_remove != float('inf') else 'inf',
+            'remove_step_counter': remove_step_counter,
+            'best_val_accuracy': best_val_accuracy,
+            'optimizer': optimizer.state_dict(),
+        }
+        torch.save(training_state, os.path.join(checkpoint_dir, 'training_state.pt'))
 
 if __name__ == "__main__":
     main()

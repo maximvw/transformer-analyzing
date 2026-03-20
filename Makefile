@@ -1,4 +1,4 @@
-.PHONY: data train-icot train-sft infer-icot infer-sft \
+.PHONY: data train-icot train-sft resume-icot resume-sft infer-icot infer-sft \
        fig2 fig3 fig5 fig6 fig7 table1 all-figures
 
 # === Генерация данных ===
@@ -36,6 +36,32 @@ train-sft:
 		--epochs $(EPOCHS_SFT) \
 		--remove_per_epoch 99999 \
 		--removal_side left \
+		--save_model train_models/4_by_4_mult/sft
+
+# === Resume обучения (продолжить с чекпоинта) ===
+# Пример: make resume-icot RESUME_CKPT_ICOT=train_models/4_by_4_mult/icot/checkpoint_5
+RESUME_CKPT_ICOT ?= train_models/4_by_4_mult/icot/checkpoint_0
+RESUME_CKPT_SFT  ?= train_models/4_by_4_mult/sft/checkpoint_0
+
+resume-icot:
+	$(TRAIN_CMD) $(TRAIN_BASE) \
+		--epochs $(EPOCHS) \
+		--remove_per_epoch 8 \
+		--remove_all_when_remove_beyond inf \
+		--removal_smoothing_lambda 4 \
+		--removal_side left \
+		--pretrain_epochs 0 \
+		--from_pretrained $(RESUME_CKPT_ICOT) \
+		--resume \
+		--save_model train_models/4_by_4_mult/icot
+
+resume-sft:
+	$(TRAIN_CMD) $(TRAIN_BASE) \
+		--epochs $(EPOCHS_SFT) \
+		--remove_per_epoch 99999 \
+		--removal_side left \
+		--from_pretrained $(RESUME_CKPT_SFT) \
+		--resume \
 		--save_model train_models/4_by_4_mult/sft
 
 # === Инференс ===
