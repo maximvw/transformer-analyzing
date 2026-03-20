@@ -66,8 +66,6 @@ class CoTDataset(Dataset):
             else:
                 batch_encoding_all = tokenizer([sent], add_special_tokens=True)
             self.examples_all.append(batch_encoding_all["input_ids"][0])
-            if len(self.examples_all) % 1000 == 0:
-                print (len(self.examples_all))
 
         separator = tokenizer.eos_token_id #tokenizer(eos_tok, add_special_tokens=False)['input_ids'][0]
         self.separator = separator
