@@ -152,6 +152,8 @@ def main():
     parser.add_argument('--max_grad_norm', type=float, default=1.0)
     parser.add_argument('--bf16', action='store_true')
     parser.set_defaults(bf16=False)
+    parser.add_argument('--fp16', action='store_true')
+    parser.set_defaults(fp16=False)
     parser.add_argument('--reset_optimizer', action='store_true')
     parser.set_defaults(reset_optimizer=False)
     parser.add_argument('--keep_position', action='store_true')
@@ -177,9 +179,12 @@ def main():
     dtype = 'float32'
     if args.bf16:
         dtype = 'bfloat16'
+    elif args.fp16:
+        dtype = 'float16'
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ctx = torch.amp.autocast(device_type='cuda', dtype=ptdtype)
+    scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
     print (ptdtype, dtype, device)
 
     # Create model
@@ -220,6 +225,12 @@ def main():
             )
     model = model.to(device).to(ptdtype)
     tokenizer = model.tokenizer
+
+    # DataParallel: wrap model if multiple GPUs available
+    raw_model = model  # keep reference to unwrapped model
+    if torch.cuda.device_count() > 1:
+        print(f'Using DataParallel on {torch.cuda.device_count()} GPUs')
+        model = torch.nn.DataParallel(model)
 
     if args.reinitialize_weights:
         print ('reinitializing weights')
@@ -271,6 +282,8 @@ def main():
             remove_step_counter = training_state['remove_step_counter']
             best_val_accuracy = training_state['best_val_accuracy']
             optimizer.load_state_dict(training_state['optimizer'])
+            if 'scaler' in training_state:
+                scaler.load_state_dict(training_state['scaler'])
             print(f'Resumed from epoch {training_state["epoch"]}, step {step}, scheduled_to_remove={scheduled_to_remove}')
         else:
             print(f'Warning: --resume specified but {training_state_path} not found, starting fresh')
@@ -350,10 +363,12 @@ def main():
                     position_ids = position_ids[:, :input_ids.shape[-1]]
                 outputs = model.compute_loss(input_ids=input_ids, labels=labels, position_ids=position_ids)
             loss = outputs.loss
-            loss.div(args.accumulate).backward()
+            scaler.scale(loss.div(args.accumulate)).backward()
             if step % args.accumulate == 0:
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(trainable_params, args.max_grad_norm)
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 optimizer.zero_grad(set_to_none=True)
 
             if step % 8000 == 0:
@@ -362,16 +377,16 @@ def main():
                 print (f"Step: {step}. PPL: {ppl}. Token Accuracy: {token_accuracy}")
             step += 1
         print (f'Scheduled to remove: {scheduled_to_remove}')
-        accuracy, token_accuracy, ppl = evaluate(val_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
+        accuracy, token_accuracy, ppl = evaluate(val_dataloader, tokenizer, device, ctx, raw_model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
         print (f'Disable Offset Val. PPL: {ppl}; Accuracy: {accuracy}; Token Accuracy: {token_accuracy}.')
         if accuracy > best_val_accuracy:
             print ('***best so far or removed more CoT tokens***')
             best_val_accuracy = accuracy
             if args.test_path:
-                accuracy, token_accuracy, ppl = evaluate(test_dataloader, tokenizer, device, ctx, model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
+                accuracy, token_accuracy, ppl = evaluate(test_dataloader, tokenizer, device, ctx, raw_model, args.max_new_tokens, scheduled_to_remove, args.removal_side, args.removal_smoothing_lambda, lambda_distribution, keep_position=args.keep_position, disable_random_removal_offset=True)
                 print (f'Test. PPL: {ppl}; Accuracy: {accuracy}; Token Accuracy: {token_accuracy}.')
         checkpoint_dir = os.path.join(args.save_model, f'checkpoint_{epoch}')
-        model.save_pretrained(checkpoint_dir)
+        raw_model.save_pretrained(checkpoint_dir)
         training_state = {
             'step': step,
             'epoch': epoch,
@@ -379,6 +394,7 @@ def main():
             'remove_step_counter': remove_step_counter,
             'best_val_accuracy': best_val_accuracy,
             'optimizer': optimizer.state_dict(),
+            'scaler': scaler.state_dict(),
         }
         torch.save(training_state, os.path.join(checkpoint_dir, 'training_state.pt'))
 
