@@ -365,7 +365,10 @@ def main():
                 if args.keep_position:
                     position_ids = position_ids[:, :input_ids.shape[-1]]
                 outputs = model(input_ids=input_ids, labels=labels, position_ids=position_ids)
-            loss = outputs['loss'].mean()
+            # Sum total_loss and total_tokens across GPUs, then compute proper mean
+            total_loss = outputs['loss'].sum()
+            total_tokens = outputs['total_tokens'].sum()
+            loss = total_loss / total_tokens
             scaler.scale(loss.div(args.accumulate)).backward()
             if step % args.accumulate == 0:
                 scaler.unscale_(optimizer)
