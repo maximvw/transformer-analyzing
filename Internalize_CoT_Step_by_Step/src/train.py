@@ -89,9 +89,9 @@ def evaluate(dataloader, tokenizer, device, ctx, model, max_new_tokens, schedule
                 position_ids_all = position_ids_all[:, :input_ids_all.shape[-1]]
             outputs = model.compute_loss(input_ids=input_ids_all, labels=labels, position_ids=position_ids_all)
 
-        total_loss += outputs.total_loss.item()
-        total_correct_tokens += outputs.total_correct.item()
-        total_tokens += outputs.total_tokens
+        total_loss += outputs['total_loss'].item()
+        total_correct_tokens += outputs['total_correct'].item()
+        total_tokens += outputs['total_tokens']
         total_instances += batch_size
 
         # Generate
@@ -361,8 +361,8 @@ def main():
             with ctx:
                 if args.keep_position:
                     position_ids = position_ids[:, :input_ids.shape[-1]]
-                outputs = model.compute_loss(input_ids=input_ids, labels=labels, position_ids=position_ids)
-            loss = outputs.loss
+                outputs = model(input_ids=input_ids, labels=labels, position_ids=position_ids)
+            loss = outputs['loss']
             scaler.scale(loss.div(args.accumulate)).backward()
             if step % args.accumulate == 0:
                 scaler.unscale_(optimizer)
@@ -372,7 +372,7 @@ def main():
                 optimizer.zero_grad(set_to_none=True)
 
             if step % 8000 == 0:
-                token_accuracy = outputs.token_accuracy.item()
+                token_accuracy = outputs['token_accuracy'].item()
                 ppl = loss.exp().item()
                 print (f"Step: {step}. PPL: {ppl}. Token Accuracy: {token_accuracy}")
             step += 1

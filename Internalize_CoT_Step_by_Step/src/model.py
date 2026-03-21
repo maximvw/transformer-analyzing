@@ -26,34 +26,36 @@ class ImplicitModel(nn.Module):
         tokenizer_name = 'gpt2' if config.gpt2_config is not None else config.tokenizer_name
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    def forward(self, input_ids, position_ids=None, output_attentions=False):
+    def forward(self, input_ids, labels=None, position_ids=None, output_attentions=False):
         if position_ids is not None:
             outputs = self.base_model.forward(input_ids=input_ids, output_attentions=output_attentions, position_ids=position_ids)
         else:
             outputs = self.base_model.forward(input_ids=input_ids, output_attentions=output_attentions)
+
+        if labels is not None:
+            logits = outputs.logits
+            labels_pred = logits.argmax(-1)
+            mask = labels[...,1:].ge(0)
+            correct_tokens = ((labels_pred[...,:-1] == labels[...,1:]) * mask).sum()
+            total_tokens = mask.sum()
+            token_accuracy = correct_tokens / total_tokens
+
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+
+            return {
+                'loss': loss,
+                'token_accuracy': token_accuracy,
+                'total_correct': correct_tokens,
+                'total_loss': loss * total_tokens,
+                'total_tokens': total_tokens,
+            }
         return outputs
 
     def compute_loss(self, input_ids, labels, position_ids=None, output_attentions=False):
-        outputs = self.forward(input_ids=input_ids, position_ids=position_ids, output_attentions=output_attentions)
-        logits = outputs.logits
-
-        labels_pred = logits.argmax(-1)
-        mask = labels[...,1:].ge(0)
-        correct_tokens = ((labels_pred[...,:-1] == labels[...,1:]) * mask).sum()
-        total_tokens = mask.sum()
-        token_accuracy = correct_tokens / total_tokens
-
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        loss_fct = CrossEntropyLoss()
-        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-
-        outputs.loss = loss
-        outputs.token_accuracy = token_accuracy
-        outputs.total_correct = correct_tokens
-        outputs.total_loss = loss * total_tokens
-        outputs.total_tokens = total_tokens
-        return outputs
+        return self.forward(input_ids=input_ids, labels=labels, position_ids=position_ids, output_attentions=output_attentions)
 
     def generate(self, input_ids, max_new_tokens=512, num_beams=1, stop_on_two_eos=True, position_ids=None):
         sep_positions = get_sep_position(input_ids, self.tokenizer.eos_token_id)
