@@ -362,7 +362,7 @@ def main():
                 if args.keep_position:
                     position_ids = position_ids[:, :input_ids.shape[-1]]
                 outputs = model(input_ids=input_ids, labels=labels, position_ids=position_ids)
-            loss = outputs['loss']
+            loss = outputs['loss'].mean()
             scaler.scale(loss.div(args.accumulate)).backward()
             if step % args.accumulate == 0:
                 scaler.unscale_(optimizer)
@@ -372,7 +372,7 @@ def main():
                 optimizer.zero_grad(set_to_none=True)
 
             if step % 8000 == 0:
-                token_accuracy = outputs['token_accuracy'].item()
+                token_accuracy = outputs['token_accuracy'].mean().item()
                 ppl = loss.exp().item()
                 print (f"Step: {step}. PPL: {ppl}. Token Accuracy: {token_accuracy}")
             step += 1
