@@ -182,9 +182,12 @@ def main():
     elif args.fp16:
         dtype = 'float16'
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
+    # For fp16 mixed precision, model stays float32; autocast handles fp16 in forward.
+    # For bf16, we cast the model explicitly (GradScaler is disabled).
+    model_dtype = torch.bfloat16 if args.bf16 else torch.float32
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ctx = torch.amp.autocast(device_type='cuda', dtype=ptdtype)
-    scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
+    scaler = torch.amp.GradScaler(device='cuda', enabled=args.fp16)
     print (ptdtype, dtype, device)
 
     # Create model
@@ -201,10 +204,10 @@ def main():
                 gpt2_cfg.n_embd = args.n_embd
             gpt2_config = gpt2_cfg.to_dict()
         config = ImplicitModelConfig(base_model=args.model, gpt2_config=gpt2_config)
-        model = ImplicitModel(config).to(device).to(ptdtype)
+        model = ImplicitModel(config).to(device).to(model_dtype)
     else:
         print (f'Loading from {args.from_pretrained}')
-        model = ImplicitModel.from_pretrained(args.from_pretrained).to(device).to(ptdtype)
+        model = ImplicitModel.from_pretrained(args.from_pretrained).to(device).to(model_dtype)
     if 'gpt2' in args.model:
         old_length = model.base_model.transformer.wpe.weight.shape[0]
         if args.truncation > old_length and args.from_pretrained is None:
@@ -223,7 +226,7 @@ def main():
                 ),
                 persistent=False,
             )
-    model = model.to(device).to(ptdtype)
+    model = model.to(device).to(model_dtype)
     tokenizer = model.tokenizer
 
     # DataParallel: wrap model if multiple GPUs available
@@ -234,7 +237,7 @@ def main():
 
     if args.reinitialize_weights:
         print ('reinitializing weights')
-        model.base_model.apply(model.base_model._init_weights)
+        raw_model.base_model.apply(raw_model.base_model._init_weights)
 
     if args.keep_position:
         assert 'gpt2' in args.model # only implemented for gpt2 generate TODO: the code for this is not checked in yet
