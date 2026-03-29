@@ -2,7 +2,7 @@
 
 ## 0. Общий замысел
 
-Цель диплома — показать, что auxiliary state-tracking loss (аналог running sum probe из статьи Bai et al.) **переносится** с задачи умножения на задачу graph reachability. Вместо running sum используется массив parent[] из алгоритма Disjoint Set Union (DSU), который обновляется при обработке каждого ребра.
+Цель диплома — показать, что auxiliary state-tracking loss (аналог running sum probe из статьи Bai et al.) **переносится** с задачи умножения на задачу graph reachability. Вместо running sum используется массив comp[] из алгоритма Disjoint Set Union (DSU), который обновляется при обработке каждого ребра.
 
 Гипотеза: SFT-модель выучит поверхностные эвристики (степень вершин, локальная связность) и провалится на OOD-графах, а модель с DSU auxiliary loss **интернализирует** алгоритм и будет генерализовать.
 
@@ -20,32 +20,28 @@
 <START> E(u1,v1) E(u2,v2) ... E(um,vm) <SEP> Q(u,v) <ANS> {0|1} <END>
 ```
 
-**Пример (граф на 4 вершинах):**
+**Пример (граф на 5 вершинах):**
 ```
-<START> E(0,1) E(2,3) E(1,2) <SEP> Q(0,3) <ANS> 1 <END>
+<START> E(0,1) E(2,3) E(1,2) E(3,4) <SEP> Q(0,3) <ANS> 1 <END>
 ```
 
-**Токенизация:** Каждый элемент — отдельный токен. Словарь:
+### 1.3 Токенизация
+
+**Compound tokens:** Каждое ребро `E(i,j)` — один токен, каждый запрос `Q(i,j)` — один токен. Словарь:
 - Специальные: `<START>`, `<SEP>`, `<ANS>`, `<END>`, `<PAD>`
-- Рёбра: `E(i,j)` для всех допустимых пар i,j (или раздельные токены `E(`, `i`, `,`, `j`, `)`)
-- Запрос: `Q(i,j)` аналогично
+- Рёбра: `E(i,j)` для всех допустимых пар (i < j)
+- Запросы: `Q(i,j)` для всех пар
 - Ответ: `0`, `1`
 
-**Решение о токенизации (нужно выбрать):**
-
-**Вариант A — Compound tokens:** Каждое ребро `E(i,j)` — один токен. Словарь: O(N^2) токенов для рёбер + O(N^2) для запросов + спец. токены. Простая обработка, но не масштабируется для больших N.
-
-**Вариант B — Factored tokens:** Раздельная токенизация: `E`, `(`, `0`, `,`, `1`, `)`. Словарь фиксированного размера O(N + const). Более длинные последовательности, но масштабируется.
-
-**Рекомендация:** Для N ≤ 50 использовать **Вариант A** (compound tokens) — это ближе к оригинальной статье, где каждая цифра = один токен, и упрощает анализ attention patterns. Размер словаря ~2500 + спец. токены — вполне допустимо.
-
-### 1.3 Порядок рёбер
-
-Рёбра подаются в **случайном** порядке (shuffle при генерации). Это важно: модель не должна полагаться на порядок рёбер.
+Для max_N = 30: ~435 edge tokens + ~870 query tokens + спец. = ~1310 токенов. Компактно и ближе к оригинальной статье, где каждая цифра = один токен.
 
 ### 1.4 Каноникализация рёбер
 
-Для каждого ребра `(u,v)`: всегда записываем `E(min(u,v), max(u,v))`, чтобы избежать дублирования.
+Для каждого ребра `(u,v)`: всегда `E(min(u,v), max(u,v))`.
+
+### 1.5 Порядок рёбер
+
+Рёбра подаются в **случайном** порядке. Shuffle выполняется **на лету** в DataLoader (каждая эпоха — новый порядок для того же графа). Это даёт бесконечную аугментацию без увеличения датасета.
 
 ---
 
@@ -65,10 +61,19 @@
 
 ### 2.2 Probe для auxiliary loss
 
-Линейный regression head крепится к **выходам attention heads последнего слоя** (до MLP), аналогично оригинальной статье.
+Линейный classification head крепится к **выходам attention heads последнего слоя** (до MLP), аналогично оригинальной статье.
 
-- Для каждой головы h: `z^h_{t} = w_h^T * ATT_h^L(·)`
-- `w_h ∈ R^{d_head}` — обучаемый вектор (не замороженный, обучается совместно с моделью)
+Probe предсказывает `comp[i]` (component ID вершины i) для каждой вершины на каждой позиции ребра.
+
+**Архитектура probe (для каждой головы h):**
+```
+logits_{t}^h = W_h * ATT_h^L(t) + b_h    // W_h ∈ R^{(max_N·max_N) × d_head}, b_h ∈ R^{max_N·max_N}
+reshape → [max_N, max_N]                   // [vertex_idx, class_logits]
+```
+
+- Строка `i` результата = `max_N` логитов для N-way classification: предсказание `comp[i]` ∈ {0, ..., max_N-1}
+- `d_head = d_model / H = 256 / 4 = 64`
+- Probe обучается **совместно** с основной моделью (не заморожен), градиенты от `L_state` проходят через probe в attention heads
 
 ---
 
@@ -76,63 +81,49 @@
 
 ### 3.1 Алгоритмическое состояние (таргет для probe)
 
-Для графа с N вершинами определяем массив `parent[0..N-1]`:
+**Component ID:** `comp[i] = min вершина в компоненте вершины i` — каноническая нумерация.
 
-**Начальное состояние** (до обработки рёбер):
-```
-parent = [0, 1, 2, ..., N-1]    (каждая вершина — свой компонент)
-```
+**Union by min:** При `Union(u, v)` корень объединённого компонента = `min(root_u, root_v)`. Это гарантирует, что `comp[i]` всегда равен минимальной вершине в компоненте, что делает таргет **детерминированным** — результат зависит только от множества обработанных рёбер на данный момент, но **не** от порядка внутри них (на каждом промежуточном шаге `comp[]` определяется однозначно для данного набора рёбер до этого шага).
 
-**При обработке ребра E(u,v):**
+Пример (N=5, рёбра в порядке E(0,1), E(2,3), E(1,2), E(3,4)):
 ```
-root_u = Find(u)   // с path compression
-root_v = Find(v)
-if root_u != root_v:
-    parent[root_v] = root_u   // Union (без rank, для простоты)
+начало:       comp = [0, 1, 2, 3, 4]
+после E(0,1): comp = [0, 0, 2, 3, 4]
+после E(2,3): comp = [0, 0, 2, 2, 4]
+после E(1,2): comp = [0, 0, 0, 0, 4]   ← merge {0,1} и {2,3}
+после E(3,4): comp = [0, 0, 0, 0, 0]
 ```
 
-**Упрощение для предсказуемости:** Используем Union **без** rank/size — всегда `parent[root_v] = root_u` (merge в сторону меньшего корня). Это делает таргет детерминированным для данного порядка рёбер.
+**Свойства таргета:**
+- **Богатый сигнал:** N значений на каждом шаге (полная информация о связности)
+- **Точный аналог running sum:** полностью определяет state и ответ на любой query
+- **Порядко-зависимый** на промежуточных шагах (это нормально — модель обрабатывает рёбра последовательно, как цифры в умножении)
 
-**Альтернатива (component ID):** Вместо parent[] можно использовать `comp[i] = Find(i)` — массив component IDs после каждого ребра. Это более "информативный" таргет, т.к. напрямую показывает, какие вершины в одном компоненте.
+### 3.2 Переменное N: padding + masking
 
-**Рекомендация:** Использовать **component ID** массив `comp[i] = Find(i)` как таргет. Это:
-- Прямее связано с финальной задачей (reachability = сравнение comp[u] и comp[v])
-- Проще для probe (не нужно восстанавливать транзитивное замыкание)
-- Аналогично running sum в оригинале: одно число на каждый timestep, суммаризующее всё вычисление до этого момента
+Для работы с графами разного размера одной моделью:
+- Фиксируем `max_N = 30`
+- Probe всегда выдаёт `max_N × max_N` логитов
+- Loss считается **только по первым N вершинам**, остальные замаскированы
 
-### 3.2 Формат таргета
-
-На позиции каждого ребра `E(u_t, v_t)` (timestep t) таргет для probe:
 ```
-comp_t = [Find(0), Find(1), ..., Find(N-1)]    после обработки ребра t
+Граф N=10: comp = [0, 0, 2, 2, 4, 4, 6, 6, 8, 8, -, -, ..., -]
+                                                     ^^^^^^^^^^^
+                                                     замаскировано
 ```
-
-Это вектор из N целых чисел (component IDs).
 
 ### 3.3 Формулировка loss
 
 **State-tracking loss (cross-entropy):**
 ```
-L_state = (1/H) * sum_{h=1}^{H} (1/M) * sum_{t=1}^{M} (1/N) * sum_{i=0}^{N-1} CE(probe_h(ATT_h^L, t, i), comp_t[i])
+L_state = (1/H) * sum_h (1/M) * sum_t (1/N) * sum_{i=0}^{N-1} CE(logits_{t,i}^h, comp_t[i])
 ```
-где:
-- M — число рёбер в последовательности
-- N — число вершин
-- `probe_h(ATT_h^L, t, i)` — предсказание probe для компоненты вершины i на шаге t от head h
-- `comp_t[i]` — истинный component ID вершины i после обработки t-го ребра
-- CE — cross-entropy (component ID — дискретная переменная ∈ {0, ..., N-1})
-
-**Probe architecture:**
-```
-logits_{t,i}^h = W_h * ATT_h^L(t) + b_h    // W_h ∈ R^{N x d_head}, b_h ∈ R^N
-```
-Отдельный linear layer для предсказания comp[i] по attention output на позиции t. Предсказывает **N-way classification** для каждой из N вершин.
 
 **Полный loss:**
 ```
 L = L_LM + lambda * L_state
 ```
-где `L_LM` — cross-entropy на финальный ответ (0 или 1).
+где `L_LM` — **classification loss**: отдельный classification head `Linear(d_model, 2)` применяется к hidden state на позиции токена `<ANS>`, результат сравнивается с target (0 или 1) через cross-entropy. Это **не** стандартный autoregressive LM loss, а classification head — модель обучается отвечать на query через бинарную классификацию.
 
 ### 3.4 Важное отличие от оригинала
 
@@ -140,15 +131,69 @@ L = L_LM + lambda * L_state
 |---|---|---|
 | Таргет probe | Скаляр c_hat_k (running sum) | Вектор comp[0..N-1] (component IDs) |
 | Loss probe | MSE (регрессия) | Cross-Entropy (классификация) |
-| Размерность таргета | 1 число на timestep | N чисел на timestep |
+| Размерность таргета | 1 число на timestep | N чисел на timestep (padded до max_N) |
 | Где крепится | Layer 2 attention out | Layer L (последний) attention out |
-| Probe | Вектор w_h | Матрица W_h ∈ R^{N x d_head} |
+| Probe | Вектор w_h ∈ R^{d_head} | Матрица W_h ∈ R^{(max_N·max_N) × d_head} |
+| Переменный размер входа | Нет (всегда 4x4) | Да (N от 8 до 30, padding + masking) |
 
 ---
 
-## 4. Генерация данных
+## 4. Генерация данных и DataLoader
 
-### 4.1 Типы графов (train)
+### 4.1 Хранение на диске
+
+На диске хранятся только **графы** (edge lists + N). DSU states и shuffle вычисляются на лету.
+
+```python
+# Файл: graphs_train.json
+[
+    {"n": 10, "edges": [[0,1], [2,3], [1,2], ...]},
+    {"n": 15, "edges": [[0,4], [3,7], ...]},
+    ...
+]
+```
+
+### 4.2 DataLoader (on-the-fly augmentation)
+
+При каждом обращении к примеру:
+1. Случайный shuffle рёбер
+2. Случайный выбор query (u, v) + вычисление label
+3. Вычисление comp[] states через DSU (микросекунды)
+
+```python
+def __getitem__(self, idx):
+    graph = self.graphs[idx]
+    N, edges = graph['n'], graph['edges']
+
+    # 1. Новый порядок рёбер каждый раз
+    perm = torch.randperm(len(edges))
+    shuffled = [edges[i] for i in perm]
+
+    # 2. Случайный query + label
+    u, v = random.sample(range(N), 2)
+    label = int(self.are_connected(edges, u, v, N))
+
+    # 3. DSU states (O(M·N), ~150 мкс для N=20, M=30)
+    comp_states = self.compute_dsu_states(shuffled, N)
+
+    # 4. Собрать input_ids + padding
+    input_ids = self.encode(shuffled, u, v, label)
+
+    return {
+        'input_ids': input_ids,              # [seq_len]
+        'target': label,                      # 0 или 1
+        'answer_pos': answer_pos,             # int
+        'edge_positions': edge_positions,     # [M]
+        'comp_states': pad(comp_states, max_N), # [M, max_N]
+        'num_vertices': N,                    # для маскирования
+    }
+```
+
+**Производительность:** DSU для одного примера ~150 мкс. DataLoader с `num_workers=4` не будет бутылочным горлышком — forward pass GPU занимает десятки мс на батч.
+
+**Стратегия val/test:** В отличие от train set, **validation и test** примеры **фиксированы** на диске (конкретный shuffle рёбер + конкретный query + label для каждого графа сохранены заранее). Это обеспечивает воспроизводимость метрик между запусками.
+
+### 4.3 Типы графов (train)
 
 | Тип | Параметры | Доля в train set |
 |---|---|---|
@@ -158,40 +203,83 @@ L = L_LM + lambda * L_state
 | Complete graph (малые N) | K_n, n ∈ {3,4,5} | 5% |
 | Path graph | Цепочка 0-1-2-..-(N-1) | 5% |
 
-### 4.2 Размеры графов
+### 4.4 Размеры графов
 
 - **Train:** N ∈ {8, 10, 12, 15, 20}
-- **Validation (in-distribution):** Те же N, те же типы, другие random seeds
-- **Test (in-distribution):** Те же N, те же типы, другие random seeds
+- **Validation / Test (in-distribution):** Те же N, те же типы, другие random seeds
 
-### 4.3 OOD Test sets (ключевое для демонстрации генерализации)
+### 4.5 OOD Test sets
 
 | OOD Test Set | Описание | Цель |
 |---|---|---|
-| **Large N** | N ∈ {25, 30, 40, 50} | Генерализация по размеру |
-| **Cyclic Grids** | Решётчатые графы (grid), cycles | Типология, не встречавшаяся в train |
-| **Adversarial Degree** | Графы, где высокая степень ≠ связность (hub + isolated components) | Сломать degree-based heuristic |
-| **Long Diameter** | Графы с диаметром >> 4 (длинные цепочки + шум) | Сломать shallow message passing |
-| **Disconnected Dense** | Два плотных компонента без связи между ними | Сломать density-based heuristic |
+| **Large N** | N ∈ {25, 30} | Генерализация по размеру |
+| **Cyclic Grids** | Решётчатые графы (grid), cycles | Топология, не встречавшаяся в train |
+| **Adversarial Degree** | hub + isolated components | Сломать degree-based heuristic |
+| **Long Diameter** | Длинные цепочки + шум (диаметр >> 4) | Сломать shallow message passing |
+| **Disconnected Dense** | Два плотных компонента без связи | Сломать density-based heuristic |
 
-### 4.4 Баланс классов
+### 4.6 Баланс классов
 
-Примерно 50/50 по ответу (reachable / not reachable). Для каждого графа генерируем:
-- Запросы (u,v) где u и v в одном компоненте → label 1
-- Запросы (u,v) где u и v в разных компонентах → label 0
+~50/50 по ответу. Для каждого графа случайно выбираем query (u,v) с балансировкой.
 
-### 4.5 Размеры датасетов
+### 4.7 Размеры датасетов
 
-| Split | Размер |
+| Split | Размер (графов) |
 |---|---|
-| Train | 80,000 примеров |
-| Validation | 2,000 |
-| Test (in-distribution) | 2,000 |
-| Test (OOD, каждый) | 1,000 |
+| Train | 20,000 графов (∞ примеров через augmentation) |
+| Validation | 2,000 графов |
+| Test (in-distribution) | 2,000 графов |
+| Test (OOD, каждый) | 1,000 графов |
 
 ---
 
-## 5. Стадии экспериментов
+## 5. Forward Pass (один батч)
+
+```
+  input_ids [B, seq_len]      <START> E01 E23 E12 E34 <SEP> Q03 <ANS> 1
+                                        │    │    │    │                │
+                                  GPT-2 (4L4H) — один forward pass
+                                        │
+                        ┌───────────────┴───────────────────┐
+                        ▼                                   ▼
+              attn_heads последнего слоя          hidden state на позиции <ANS>
+              на позициях рёбер [t=1,2,3,4]              │
+                        │                          Linear → 2 класса
+                        │                                │
+                  Probe (linear)                     L_LM (CE)
+              W_h @ attn_h(t) → [max_N, max_N]
+                        │
+          CE vs true comp[] (masked по N)
+                        │
+                    L_state
+
+                L = L_LM + λ * L_state — один backward pass
+```
+
+**В коде (батчевые операции, без циклов):**
+
+```python
+# 1. Forward — один вызов модели
+hidden, attn_heads = model(input_ids)
+# attn_heads: [B, H, seq_len, d_head]
+
+# 2. L_LM
+answer_logits = classifier(hidden[torch.arange(B), answer_pos])  # [B, 2]
+L_lm = F.cross_entropy(answer_logits, target)
+
+# 3. L_state — gather + matmul, без циклов
+edge_attn = attn_heads[:, :, edge_positions, :]   # [B, H, M, d_head]
+pred = probe(edge_attn)                            # [B, H, M, max_N, max_N]
+L_state = masked_cross_entropy(pred, comp_states, vertex_mask)
+
+# 4. Total
+loss = L_lm + lambda_ * L_state
+loss.backward()
+```
+
+---
+
+## 6. Стадии экспериментов
 
 ### Стадия 1: Baseline SFT
 
@@ -199,7 +287,7 @@ L = L_LM + lambda * L_state
 
 **Настройка:**
 - Loss: только `L_LM` (cross-entropy на ответ)
-- Без CoT, без auxiliary loss
+- Без auxiliary loss
 - Архитектура: 4L4H GPT-2
 - LR: 5e-5, AdamW, weight decay 0.01
 - Batch size: 32
@@ -219,7 +307,7 @@ L = L_LM + lambda * L_state
 
 ### Стадия 2: Auxiliary Loss (DSU state-tracking)
 
-**Цель:** Главный эксперимент — показать, что DSU auxiliary loss даёт 99-100% accuracy без CoT.
+**Цель:** Главный эксперимент — показать, что DSU auxiliary loss значительно улучшает accuracy.
 
 **Настройка:**
 - Loss: `L = L_LM + lambda * L_state`
@@ -291,40 +379,41 @@ L = L_LM + lambda * L_state
 
 ---
 
-## 6. Метрики
+## 7. Метрики
 
 | Метрика | Описание |
 |---|---|
 | **Accuracy (exact match)** | Доля правильных ответов 0/1 |
 | **ID Accuracy** | Accuracy на in-distribution test set |
 | **OOD Accuracy** | Accuracy на каждом OOD test set отдельно |
-| **State-tracking MAE** | Mean Absolute Error probe предсказаний vs истинный comp[] |
-| **State-tracking Accuracy** | Доля правильно предсказанных component IDs |
+| **State-tracking Accuracy** | Доля правильно предсказанных component IDs probe-ом |
 | **Degree Correlation** | Корреляция Спирмена между degree вершины и P(reachable) |
 | **Per-diameter Accuracy** | Accuracy в зависимости от расстояния между query вершинами |
 | **Loss curves** | L_LM, L_state, L_total по шагам |
 
 ---
 
-## 7. Гиперпараметры (сводка)
+## 8. Гиперпараметры (сводка)
 
 | Параметр | Значение |
 |---|---|
 | Архитектура | 4-layer, 4-head GPT-2, d_model=256 |
+| max_N (padding) | 30 |
 | Optimizer | AdamW |
 | LR | 5e-5 |
 | Weight decay | 0.01 |
 | Batch size | 32 |
-| Max sequence length | ~200 tokens (для N=20, m≈30 edges) |
-| Train samples | 80,000 |
-| Val/Test samples | 2,000 / 2,000 |
+| Max sequence length | ~60 tokens (для N=20, m≈30 edges + query + specials) |
+| Train graphs | 20,000 (∞ примеров через on-the-fly augmentation) |
+| Val/Test graphs | 2,000 / 2,000 |
 | lambda (aux loss weight) | Grid search: {0.1, 0.5, 1.0, 2.0, 5.0} |
-| Training epochs | До 50 (с early stopping по val loss) |
+| Early stopping | По val L_total, patience = 5-10 эпох |
+| Training epochs | До 50 (с early stopping) |
 | GPU | 1x (A100/H100/что доступно) |
 
 ---
 
-## 8. Ожидаемые результаты (сводная таблица)
+## 9. Ожидаемые результаты (сводная таблица)
 
 | Модель | ID Acc | OOD Large N | OOD Adversarial | OOD Long Diam |
 |---|---|---|---|---|
@@ -334,35 +423,36 @@ L = L_LM + lambda * L_state
 
 ---
 
-## 9. План реализации (порядок)
+## 10. План реализации (порядок)
 
-1. **Генерация данных** — скрипт `generate_data.py` (уже начат)
-   - Генерация графов всех типов
-   - Вычисление DSU states для каждого шага
-   - Сохранение в формате для тренировки
+1. **Генерация данных** — скрипт `generate_data.py`
+   - Генерация графов всех типов (edge lists + N)
+   - Сохранение как JSON / pickle
 
-2. **Модель + SFT training** — базовый пайплайн
-   - GPT-2 from scratch
-   - Dataloader для graph sequences
-   - Training loop с логированием per-step
+2. **DataLoader** — on-the-fly augmentation
+   - Shuffle рёбер + random query + DSU states на лету
+   - Padding / masking для переменного N
 
-3. **Auxiliary loss** — добавить probe heads
-   - Linear probes к attention outputs
-   - DSU state cross-entropy loss
-   - Lambda scheduling (опционально)
+3. **Модель + SFT training** — базовый пайплайн
+   - GPT-2 from scratch с compound tokenization
+   - Training loop с логированием
 
-4. **Evaluation pipeline** — автоматический запуск всех тестов
+4. **Auxiliary loss** — добавить probe head
+   - Linear probe к attention outputs последнего слоя
+   - Masked cross-entropy для comp[] states
+   - Подбор lambda
+
+5. **Evaluation pipeline** — автоматический запуск всех тестов
    - ID/OOD accuracy
    - State-tracking metrics
-   - Attention visualization
 
-5. **Analysis & Interpretability** — logit attribution, probing, attention patterns
+6. **Analysis & Interpretability** — logit attribution, probing, attention patterns
    - Jupyter notebooks для визуализации
    - Сравнение механизмов SFT vs Aux Loss
 
 ---
 
-## 10. Риски и fallback-планы
+## 11. Риски и fallback-планы
 
 | Риск | Вероятность | Mitigation |
 |---|---|---|

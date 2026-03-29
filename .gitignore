@@ -20,6 +20,7 @@ project_proposal.pdf
 
 train_models/
 pdfs/
+legacy/
 
 # Large training data (regenerate with generate_data.py)
 Internalize_CoT_Step_by_Step/data/*/train.txt
