@@ -10,6 +10,7 @@ from pathlib import Path
 import torch
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from .data import GraphConnectivityDataset, collate_fn
 from .model import GraphGPT, DSUProbe, compute_losses
@@ -36,7 +37,8 @@ def train_epoch(
     total = 0
     n_batches = 0
 
-    for batch in loader:
+    pbar = tqdm(loader, desc="Train", leave=False)
+    for batch in pbar:
         optimizer.zero_grad()
         result = compute_losses(model, probe, batch, lambda_state, device)
         result["loss"].backward()
@@ -57,6 +59,8 @@ def train_epoch(
         correct += (preds == batch["targets"].to(device)).sum().item()
         total += batch["targets"].size(0)
         n_batches += 1
+
+        pbar.set_postfix(loss=total_loss / n_batches, acc=correct / total)
 
     return {
         "loss": total_loss / n_batches,
@@ -85,7 +89,8 @@ def eval_epoch(
     total = 0
     n_batches = 0
 
-    for batch in loader:
+    pbar = tqdm(loader, desc="Val", leave=False)
+    for batch in pbar:
         result = compute_losses(model, probe, batch, lambda_state, device)
         total_loss += result["loss"].item()
         total_lm += result["loss_lm"].item()
@@ -95,6 +100,8 @@ def eval_epoch(
         correct += (preds == batch["targets"].to(device)).sum().item()
         total += batch["targets"].size(0)
         n_batches += 1
+
+        pbar.set_postfix(loss=total_loss / n_batches, acc=correct / total)
 
     return {
         "loss": total_loss / n_batches,
