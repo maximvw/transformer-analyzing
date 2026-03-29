@@ -293,7 +293,7 @@ def generate_ood_datasets(seed: int = 100) -> dict[str, list[dict]]:
 def main():
     parser = argparse.ArgumentParser(description="Generate graph connectivity datasets")
     parser.add_argument("--output_dir", type=str, default="graph_connectivity/data")
-    parser.add_argument("--n_train", type=int, default=20000)
+    parser.add_argument("--n_train", type=int, default=100000)
     parser.add_argument("--n_val", type=int, default=2000)
     parser.add_argument("--n_test", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=42)
@@ -303,26 +303,32 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     n_values_train = [8, 10, 12, 15, 20]
+    n_total = args.n_train + args.n_val + args.n_test
 
-    print("Generating train graphs...")
-    train_graphs = generate_train_graphs(args.n_train, n_values_train, seed=args.seed)
+    print(f"Generating {n_total} graphs (single pool, then split)...")
+    all_graphs = generate_train_graphs(n_total, n_values_train, seed=args.seed)
+
+    # Deterministic shuffle and split — guarantees no overlap
+    random.seed(args.seed)
+    random.shuffle(all_graphs)
+
+    train_graphs = all_graphs[:args.n_train]
+    val_graphs = all_graphs[args.n_train:args.n_train + args.n_val]
+    test_graphs = all_graphs[args.n_train + args.n_val:]
+
+    print(f"Saving train ({len(train_graphs)})...")
     with open(out / "train.json", "w") as f:
         json.dump(train_graphs, f)
-    print(f"  Saved {len(train_graphs)} train graphs")
 
-    print("Generating val graphs...")
-    val_graphs = generate_train_graphs(args.n_val, n_values_train, seed=args.seed + 1)
+    print(f"Saving val ({len(val_graphs)})...")
     val_fixed = generate_fixed_dataset(val_graphs, seed=args.seed + 100)
     with open(out / "val.json", "w") as f:
         json.dump(val_fixed, f)
-    print(f"  Saved {len(val_fixed)} val examples")
 
-    print("Generating test (ID) graphs...")
-    test_graphs = generate_train_graphs(args.n_test, n_values_train, seed=args.seed + 2)
+    print(f"Saving test ID ({len(test_graphs)})...")
     test_fixed = generate_fixed_dataset(test_graphs, seed=args.seed + 200)
     with open(out / "test_id.json", "w") as f:
         json.dump(test_fixed, f)
-    print(f"  Saved {len(test_fixed)} test ID examples")
 
     print("Generating OOD test sets...")
     ood = generate_ood_datasets(seed=args.seed + 1000)
